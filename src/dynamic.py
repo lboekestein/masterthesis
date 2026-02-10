@@ -10,8 +10,13 @@ import pandas as pd
 import pickle as pkl
 import numpy as np
 
-from typing import Union, Dict, List, Tuple, Optional
+from typing import Union, Dict, List, Tuple, Optional, Protocol
 from sklearn.ensemble import RandomForestRegressor
+
+
+class AnyModel(Protocol):
+    def fit(self, X, y) -> "AnyModel": ...
+    def predict(self, X) -> np.ndarray: ...
 
 
 class DynamicModel:
@@ -27,6 +32,7 @@ class DynamicModel:
             target: str,
             step: int,
             train_split: Tuple[int, int],
+            model: AnyModel = RandomForestRegressor()
         ):
 
         self.data = data
@@ -34,7 +40,7 @@ class DynamicModel:
         self.target = target
         self.step = step
         self.train_split = train_split #this should be a tuple of month_ids
-        self.model = RandomForestRegressor()
+        self.model = model 
 
     def fit(self):
 
@@ -50,10 +56,11 @@ class DynamicModel:
 
         X = self.data[self.features]
         y = self.data[self.target]
-        
+
         self.model.fit(X, y)
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
+
         return self.model.predict(X)
     
 
@@ -75,3 +82,11 @@ class DynamicModelManager:
         self.steps = steps
         self.train_window_size = train_window_size
         self.test_window_size = test_window_size
+
+    def fit(self):
+        ...
+
+
+
+    def predict(self):
+        ...
