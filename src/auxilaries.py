@@ -4,6 +4,7 @@ Auxiliary functions for the thesis project.
 
 import pandas as pd
 import requests
+import calendar
 
 
 def retrieve_data_from_api(run: str, 
@@ -59,3 +60,36 @@ def retrieve_data_from_api(run: str,
     forecasts=pd.DataFrame(master_list)
 
     return forecasts
+
+def date_to_month_id(year: int, month: int) -> int:
+    """ 
+    Convert year and month to month_id.
+
+    Args:
+        year (int): year (e.g. 2022)
+        month (int): month (1-12)
+    
+    Returns:
+        int: month_id
+    """
+
+    return (year - 1980) * 12 + month
+
+
+def month_id_to_ym(month_id: int) -> str:
+    """
+    Converts month_id to month name and year
+
+    Args:
+        month_id: integer representing the month id
+    
+    Returns:
+        String consisting of month name and year
+    """
+
+    offset = month_id - 1
+    year = 1980 + offset // 12
+    month_num = offset % 12 + 1
+    month_name = calendar.month_name[month_num]
+
+    return f"{month_name} {year}"
