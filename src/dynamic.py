@@ -18,9 +18,10 @@ from sklearn.ensemble import RandomForestRegressor
 
 
 class AnyModel(Protocol):
-    def fit(self, X, y) -> "AnyModel": ...
-    def predict(self, X) -> np.ndarray: ...
-
+    def fit(self, X, y) -> "AnyModel": 
+        ...
+    def predict(self, X) -> np.ndarray: 
+        ...
 
 @dataclass(frozen=True)
 class TrainSplit:
@@ -34,6 +35,7 @@ class TestSplit:
     end_month: int
     step: int
 
+
 class Prediction:
 
     def __init__(
@@ -46,6 +48,60 @@ class Prediction:
         self.train_split = train_split
         self.test_split = test_split
         self.predictions = predictions
+
+
+    def msle(
+            self, 
+            actuals: pd.DataFrame, 
+            actual_col: str = "ucdp_ged_sb_best_sum", 
+            pred_col: str = "prediction"
+        ) -> float:
+        """
+        Calculate Mean Squared Log Error.
+        Requires columns 'pred' and 'target' in self.predictions.
+        """
+
+        merged = self.predictions.merge(
+            actuals,
+            left_on=["target_month_id", "country_id"],
+            right_on=["month_id", "country_id"],
+            how="inner"
+        )
+
+        y_true = merged[actual_col].to_numpy(dtype=float)
+        y_pred = merged[pred_col].to_numpy(dtype=float)
+
+        if np.any(y_true < 0) or np.any(y_pred < 0):
+            raise ValueError("MSLE cannot be computed with negative values.")
+
+        return float(np.mean((np.log1p(y_true) - np.log1p(y_pred)) ** 2))
+    
+
+    def mse(
+            self, 
+            actuals: pd.DataFrame, 
+            actual_col: str = "ucdp_ged_sb_best_sum", 
+            pred_col: str = "prediction"
+        ) -> float:
+        """
+        Calculate Mean Squared Error.
+        Requires columns 'pred' and 'target' in self.predictions.
+        """
+
+        merged = self.predictions.merge(
+            actuals,
+            left_on=["target_month_id", "country_id"],
+            right_on=["month_id", "country_id"],
+            how="inner"
+        )
+
+        y_true = merged[actual_col].to_numpy(dtype=float)
+        y_pred = merged[pred_col].to_numpy(dtype=float)
+
+        if np.any(y_true < 0) or np.any(y_pred < 0):
+            raise ValueError("MSE cannot be computed with negative values.")
+
+        return float(np.mean((y_true - y_pred) ** 2))
 
 
     def __repr__(self) -> str:
@@ -64,11 +120,11 @@ class DynamicModel:
     def __init__(
             self, 
             train_split: TrainSplit,
-            model: AnyModel = RandomForestRegressor()
+            model: Optional[AnyModel] = None
         ):
 
         self.train_split = train_split
-        self.model = model 
+        self.model = model if model is not None else RandomForestRegressor()
         
         self.features = []
         self.target = ""
@@ -81,7 +137,7 @@ class DynamicModel:
             data: pd.DataFrame, 
             features: List[str], 
             target: str,
-        ) -> None:
+         ) -> None:
 
         data = data.copy()
 
@@ -261,7 +317,7 @@ class DynamicModelManager:
         for step in self.steps:
 
             start_month = month_min
-            end_month = month_min + self.train_window_size
+            end_month = month_min + self.train_window_size - 1
 
             while start_month <= month_max:
 
@@ -290,7 +346,7 @@ class DynamicModelManager:
         month_max = self.full_split[1]
 
         # get windows before the train split
-        start_month = model.train_split.start_month - test_window_size - 1
+        start_month = model.train_split.start_month - test_window_size
         end_month = model.train_split.start_month - 1
 
         while start_month >= month_min:
