@@ -18,6 +18,9 @@ from sklearn.ensemble import RandomForestRegressor
 
 
 class AnyModel(Protocol):
+    """
+    Protocol for any machine learning model that implements fit and predict methods.
+    """
     def fit(self, X, y) -> "AnyModel": 
         ...
     def predict(self, X) -> np.ndarray: 
@@ -25,40 +28,71 @@ class AnyModel(Protocol):
 
 @dataclass(frozen=True)
 class TrainSplit:
+    """
+    Dataclass for a training split of the data.
+
+    Attributes:
+        start_month (int): the starting month of the training split (inclusive)
+        end_month (int): the ending month of the training split (inclusive)
+        step (int): the number of months the model is predicting into the future
+    """
     start_month: int
     end_month: int
     step: int
 
 @dataclass(frozen=True)
 class TestSplit:
+    """
+    Dataclass for a test split of the data.
+
+    Attributes:
+        start_month (int): the starting month of the training split (inclusive)
+        end_month (int): the ending month of the training split (inclusive)
+        step (int): the number of months the model is predicting into the future
+    """
     start_month: int
     end_month: int
     step: int
 
 
 class Prediction:
+    """
+    Class for storing predictions from a DynamicModel on a specific test split.
+
+    Attributes:
+        train_split (TrainSplit): the training split the model was trained on
+        test_split (TestSplit): the test split the predictions are for
+        predictions (pd.DataFrame): a dataframe containing the predictions, with columns 'target_month_id', 'country_id', and 'prediction'
+        prediction_col (str): the name of the column in predictions that contains the predicted values
+        prediction_target (str): the name of the target variable that the model is predicting (e.g. 'ucdp_ged_sb_best_sum')
+    """
 
     def __init__(
             self,
             train_split: TrainSplit,
             test_split: TestSplit,
-            predictions: pd.DataFrame
+            predictions: pd.DataFrame,
+            prediction_col: str = "prediction",
+            prediction_target: str = "ucdp_ged_sb_best_sum"
         ):
 
         self.train_split = train_split
         self.test_split = test_split
         self.predictions = predictions
+        self.prediction_col = prediction_col
+        self.prediction_target = prediction_target
 
 
     def msle(
             self, 
             actuals: pd.DataFrame, 
-            actual_col: str = "ucdp_ged_sb_best_sum", 
-            pred_col: str = "prediction"
         ) -> float:
         """
         Calculate Mean Squared Log Error.
-        Requires columns 'pred' and 'target' in self.predictions.
+        
+        Arguments:
+            actuals (pd.DataFrame): a dataframe containing the actual values, with columns 'month_id', 'country_id', 
+            and the target variable (e.g. 'ucdp_ged_sb_best_sum'), corresponding to self.prediction_target.
         """
 
         merged = self.predictions.merge(
@@ -68,8 +102,8 @@ class Prediction:
             how="inner"
         )
 
-        y_true = merged[actual_col].to_numpy(dtype=float)
-        y_pred = merged[pred_col].to_numpy(dtype=float)
+        y_true = merged[self.prediction_target].to_numpy(dtype=float)
+        y_pred = merged[self.prediction_col].to_numpy(dtype=float)
 
         if np.any(y_true < 0) or np.any(y_pred < 0):
             raise ValueError("MSLE cannot be computed with negative values.")
@@ -80,12 +114,13 @@ class Prediction:
     def mse(
             self, 
             actuals: pd.DataFrame, 
-            actual_col: str = "ucdp_ged_sb_best_sum", 
-            pred_col: str = "prediction"
         ) -> float:
         """
         Calculate Mean Squared Error.
-        Requires columns 'pred' and 'target' in self.predictions.
+        
+        Arguments:
+            actuals (pd.DataFrame): a dataframe containing the actual values, with columns 'month_id', 'country_id', 
+            and the target variable (e.g. 'ucdp_ged_sb_best_sum'), corresponding to self.prediction_target.
         """
 
         merged = self.predictions.merge(
@@ -95,8 +130,8 @@ class Prediction:
             how="inner"
         )
 
-        y_true = merged[actual_col].to_numpy(dtype=float)
-        y_pred = merged[pred_col].to_numpy(dtype=float)
+        y_true = merged[self.prediction_target].to_numpy(dtype=float)
+        y_pred = merged[self.prediction_col].to_numpy(dtype=float)
 
         if np.any(y_true < 0) or np.any(y_pred < 0):
             raise ValueError("MSE cannot be computed with negative values.")
@@ -108,7 +143,8 @@ class Prediction:
         return (
             f"Prediction({self.train_split}, "
             f"{self.test_split}, "
-            f"predictions_shape={self.predictions.shape})"
+            f"Target: {self.prediction_target}, as column {self.prediction_col}, "
+            f"Size={self.predictions.shape})"
         )
 
 class DynamicModel:
@@ -124,11 +160,12 @@ class DynamicModel:
         ):
 
         self.train_split = train_split
-        self.model = model if model is not None else RandomForestRegressor()
+        self.model = model if model is not None else RandomForestRegressor(random_state=42)
         
         self.features = []
         self.target = ""
 
+        self.train_rows = 0
         self._is_fitted = False
 
 
@@ -155,7 +192,7 @@ class DynamicModel:
         data = data.dropna(subset=["target"])
 
         X = data[self.features]
-        y = data[self.target]
+        y = data["target"]
 
         self.model.fit(X, y)
 
@@ -219,7 +256,7 @@ class DynamicModelManager:
         start_time = time.time()
     
         for split in tqdm(train_splits, total = len(train_splits), desc="Fitting models"):
-                
+            
             # init model
             model = DynamicModel(
                 train_split=split
@@ -274,12 +311,14 @@ class DynamicModelManager:
                 test_splits = self.get_test_splits(model, test_window_size, slide_window_size)
 
                 for test_split in test_splits:
+                    
+                    test_data = data.copy()
 
                     # lead the target variable by the step size
-                    data["target_month_id"] = data["month_id"] + test_split.step
+                    test_data["target_month_id"] = test_data["month_id"] + test_split.step
 
                     # filter the data to only include rows where the month_id is within the test split
-                    test_data = self.data[self.data['month_id'].between(test_split.start_month, test_split.end_month)]
+                    test_data = test_data[test_data['target_month_id'].between(test_split.start_month, test_split.end_month)]
 
                     # drop NA
                     test_data = test_data.dropna(subset=self.features)
@@ -297,7 +336,8 @@ class DynamicModelManager:
                     prediction = Prediction(
                         train_split=model.train_split,
                         test_split=test_split,
-                        predictions=predictions_df
+                        predictions=predictions_df,
+                        prediction_target=self.target
                     )
 
                     self.predictions.append(prediction)
