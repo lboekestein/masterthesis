@@ -26,6 +26,7 @@ class AnyModel(Protocol):
     def predict(self, X) -> np.ndarray: 
         ...
 
+
 @dataclass(frozen=True)
 class TrainSplit:
     """
@@ -39,6 +40,7 @@ class TrainSplit:
     start_month: int
     end_month: int
     step: int
+
 
 @dataclass(frozen=True)
 class TestSplit:
@@ -82,6 +84,32 @@ class Prediction:
         self.prediction_col = prediction_col
         self.prediction_target = prediction_target
 
+        self.distance_ = self.calculate_distance()
+
+    
+    def calculate_distance(self) -> float:
+        """
+        Calculate the distance between the train and test splits in months.
+        Distance is defined as the number of months between the closest edge of the train split to the middle of the test split. 
+        If the train split overlaps with the test split, distance is not defined and an error is raised.
+        
+        Returns:
+            float: the distance between the train and test splits in months
+        """
+
+        # compute the middle of the test split
+        test_middle = (self.test_split.start_month + self.test_split.end_month) / 2
+        
+        # if the train split is after the test split, return the distance from the start of the train split to middle of the test split
+        if self.train_split.start_month >= test_middle:
+            return self.train_split.start_month - test_middle
+        # if the train split is before the test split, return the distance from the end of the train split to middle of the test split
+        elif self.train_split.end_month <= test_middle:
+            return test_middle - self.train_split.end_month
+        # if the train split overlaps with the test split, raise error
+        else:
+            raise ValueError("Train and test splits overlap, distance is not defined")
+
 
     def msle(
             self, 
@@ -95,6 +123,7 @@ class Prediction:
             and the target variable (e.g. 'ucdp_ged_sb_best_sum'), corresponding to self.prediction_target.
         """
 
+        # merge predictions with actuals on month_id and country_id
         merged = self.predictions.merge(
             actuals,
             left_on=["target_month_id", "country_id"],
@@ -102,9 +131,11 @@ class Prediction:
             how="inner"
         )
 
+        # define y_true and y_pred
         y_true = merged[self.prediction_target].to_numpy(dtype=float)
         y_pred = merged[self.prediction_col].to_numpy(dtype=float)
 
+        # check for negative values, as MSLE cannot be computed with negative values
         if np.any(y_true < 0) or np.any(y_pred < 0):
             raise ValueError("MSLE cannot be computed with negative values.")
 
@@ -123,6 +154,7 @@ class Prediction:
             and the target variable (e.g. 'ucdp_ged_sb_best_sum'), corresponding to self.prediction_target.
         """
 
+        # merge predictions with actuals on month_id and country_id
         merged = self.predictions.merge(
             actuals,
             left_on=["target_month_id", "country_id"],
@@ -130,9 +162,11 @@ class Prediction:
             how="inner"
         )
 
+        # define y_true and y_pred
         y_true = merged[self.prediction_target].to_numpy(dtype=float)
         y_pred = merged[self.prediction_col].to_numpy(dtype=float)
 
+        # check for negative values, as MSE cannot be computed with negative values
         if np.any(y_true < 0) or np.any(y_pred < 0):
             raise ValueError("MSE cannot be computed with negative values.")
 
@@ -156,16 +190,17 @@ class DynamicModel:
     def __init__(
             self, 
             train_split: TrainSplit,
-            model: Optional[AnyModel] = None
+            model: Optional[AnyModel] = None,
+            random_state: int = 42
         ):
 
         self.train_split = train_split
-        self.model = model if model is not None else RandomForestRegressor(random_state=42)
+        self.model = model if model is not None else RandomForestRegressor(random_state=random_state)
         
         self.features = []
         self.target = ""
 
-        self.train_rows = 0
+        self.train_shape_ = (0, 0)
         self._is_fitted = False
 
 
@@ -177,7 +212,7 @@ class DynamicModel:
          ) -> None:
 
         data = data.copy()
-
+ 
         self.features = features
         self.target = target
 
@@ -193,6 +228,8 @@ class DynamicModel:
 
         X = data[self.features]
         y = data["target"]
+
+        self.train_shape_ = X.shape
 
         self.model.fit(X, y)
 
@@ -233,7 +270,8 @@ class DynamicModelManager:
             train_window_size: int, 
             test_window_size: int,
             slide_window_size: int,
-            full_split: Tuple[int, int]
+            full_split: Tuple[int, int],
+            random_state: int = 42
         ):
         
         self.data = data.copy()
@@ -246,6 +284,7 @@ class DynamicModelManager:
         self.test_window_size = test_window_size # should be in months
         self.slide_window_size = slide_window_size # should be in months
         self.full_split = full_split #should be month_id tuple
+        self.random_state = random_state
 
         self._is_fitted = False
 
@@ -259,7 +298,7 @@ class DynamicModelManager:
             
             # init model
             model = DynamicModel(
-                train_split=split
+                train_split=split, random_state=self.random_state
             )
 
             # fit model
