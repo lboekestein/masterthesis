@@ -102,7 +102,7 @@ class Prediction:
         
         # if the train split is after the test split, return the distance from the start of the train split to middle of the test split
         if self.train_split.start_month >= test_middle:
-            return self.train_split.start_month - test_middle
+            return test_middle - self.train_split.start_month
         # if the train split is before the test split, return the distance from the end of the train split to middle of the test split
         elif self.train_split.end_month <= test_middle:
             return test_middle - self.train_split.end_month
@@ -210,6 +210,17 @@ class DynamicModel:
             features: List[str], 
             target: str,
          ) -> None:
+        """
+        Fit the model on the given data for the specified features and target variable, using the train split defined in self.train_split.
+        The data must contain columns 'month_id', 'country_id', and the target variable defined in self.target, 
+        as well as any features defined in self.features.
+
+        Arguments:
+            data (pd.DataFrame): a dataframe containing the data to fit the model on, which must contain columns 'month_id', 'country_id', 
+                and the target variable defined in self.target, as well as any features defined in self.features.
+            features (List[str]): a list of feature column names to be used for training the model.
+            target (str): the name of the target variable column to be used for training the model.
+        """
 
         data = data.copy()
  
@@ -240,6 +251,15 @@ class DynamicModel:
             self, 
             data: pd.DataFrame,
     ) -> np.ndarray:
+        """
+        Generate predictions for the given data using the fitted model.
+        
+        Arguments:
+            data (pd.DataFrame): a dataframe containing the features to generate predictions for, which must
+                contain columns 'month_id', 'country_id', and all features defined in self.features.
+        Returns:
+            np.ndarray: an array of predictions for the given data in the shape (n_samples,). 
+        """
         
         if not self._is_fitted:
             raise ValueError("Model must be fitted before predicting")
@@ -259,6 +279,27 @@ class DynamicModelManager:
 
     """
     Class for managing multiple DynamicModels, each trained on a different train split of the data.
+
+    Attributes:
+        steps (List[int]): a list of step sizes (in months) that the models are predicting into the future, 
+            which determines the train and test splits that are generated
+        data (pd.DataFrame): the full dataset to be used for training and prediction, which
+            must contain columns 'month_id', 'country_id', and the target variable defined in self.target, 
+            as well as any features defined in self.features.
+        features (List[str]): a list of feature column names to be used for training the models
+        target (str): the name of the target variable column to be used for training the models
+        train_window_size (int): the size of the training window in months
+        test_window_size (int): the size of the test window in months
+        slide_window_size (int): the size of the sliding window in months, which determines how much the train and test splits are shifted for each model
+        full_split (Tuple[int, int]): a tuple of (start_month, end_month) representing the full range of months in the dataset
+        random_state (int): the random state to be used for any random operations, default is 42
+        train_splits (List[TrainSplit]): a list of TrainSplit objects representing the train splits to be used for training the models, 
+            generated based on the full split, train window size, and slide window size
+        test_splits (List[TestSplit]): a list of TestSplit objects representing the test splits to be used for evaluation, 
+            generated based on the full split, test window size, and slide window size
+        models (Dict[Tuple[int, int], DynamicModel]): a dictionary of DynamicModel objects,
+            where the keys are tuples of (start_month, step) for the train split, and the values are the fitted DynamicModel objects
+        predictions (List[Prediction]): a list of Prediction objects representing the predictions made by the models on the test splits
     """
 
     def __init__(
@@ -278,6 +319,7 @@ class DynamicModelManager:
         self.features = features
         self.target = target
         self.models = {}
+        self.baseline_models = {}
         self.predictions = []
         self.steps = steps
         self.train_window_size = train_window_size #should be in months
@@ -288,13 +330,18 @@ class DynamicModelManager:
 
         self._is_fitted = False
 
-    def fit(self) -> None:
+        self.train_splits = self.get_train_splits()
+        self.test_splits = self.get_test_splits()
 
-        train_splits = self.get_train_splits()
+    def fit(self) -> None:
+        """
+        Fit a DynamicModel for each train split and store them in self.models.
+        The keys of self.models are tuples of (start_month, step) for the train split, and the values are the fitted DynamicModel objects.
+        """
 
         start_time = time.time()
     
-        for split in tqdm(train_splits, total = len(train_splits), desc="Fitting models"):
+        for split in tqdm(self.train_splits, total = len(self.train_splits), desc="Fitting models"):
             
             # init model
             model = DynamicModel(
@@ -314,42 +361,70 @@ class DynamicModelManager:
         # set fitted flag to True
         self._is_fitted = True
 
+    
+    def fit_baselines(self, data: pd.DataFrame) -> None:
+        
+        
+        for split in self.test_splits:
 
-    def save_artifact(self) -> None:
+            
 
-        with open("../data/model_artifacts/dynamic_model_manager.pkl", "wb") as f:
+
+        
+        ...
+
+
+    def save_artifact(
+            self,
+            path: str = "../data/model_artifacts"
+        ) -> None:
+        """
+        Save the DynamicModelManager object as a pickle file in the data/model_artifacts directory.
+
+        Arguments:
+            path (str): the path to save the pickle file, default is "../data/model_artifacts"
+        """
+
+        with open(f"{path}/dynamic_model_manager.pkl", "wb") as f:
             pkl.dump(self, f)
 
 
     def predict(
             self, 
             data: pd.DataFrame,
-            test_window_size: Optional[int] = None,
-            slide_window_size: Optional[int] = None
         ) -> None:
+        """
+        Generate predictions for all models on all test splits and store them in self.predictions as Prediction objects.
+        Note, no predictions are made for test splits that overlap with the train split of the model.
+
+        Arguments:
+            data (pd.DataFrame): the full dataset to generate predictions on, which will be filtered for each test split. 
+                Must contain columns 'month_id', 'country_id', and the target variable defined in self.target, 
+                as well as any features defined in self.features.
+        """
 
         data = data.copy()
 
         if not self._is_fitted:
             raise ValueError("Models must be fitted before predicting")
-        
-        # set window sizes
-        test_window_size = test_window_size or self.test_window_size
-        slide_window_size = slide_window_size or self.slide_window_size
 
-        total_iterations = sum(
-            len(self.get_test_splits(self.models[m], test_window_size, slide_window_size))
-            for m in self.models
-        )
+        # TODO this is currently an overestimation of the number of iterations
+        total_iterations = len(self.models) * len(self.test_splits)
         
         with tqdm(total=total_iterations, desc="Predicting") as pbar:
             for model in self.models:
 
                 model = self.models[model]
 
-                test_splits = self.get_test_splits(model, test_window_size, slide_window_size)
+                for test_split in self.test_splits:
 
-                for test_split in test_splits:
+                    if self._has_overlap(model.train_split, test_split):
+                        pbar.update(1)
+                        continue
+
+                    if model.train_split.step != test_split.step:
+                        pbar.update(1)
+                        continue
                     
                     test_data = data.copy()
 
@@ -385,6 +460,12 @@ class DynamicModelManager:
 
     
     def get_train_splits(self) -> List[TrainSplit]:
+        """
+        Generate train splits based on the full split, train window size, and slide window size.
+        
+        Returns:
+            List[TrainSplit]: a list of TrainSplit objects representing the train splits to be used for training the models.
+        """
 
         train_splits = []
 
@@ -412,45 +493,57 @@ class DynamicModelManager:
 
     def get_test_splits(
             self, 
-            model: DynamicModel,
-            test_window_size: int,
-            slide_window_size: int
         ) -> List[TestSplit]:
+        """
+        Generate test splits based on the full split, test window size, and slide window size.
+
+        Returns:
+            List[TestSplit]: a list of TestSplit objects representing the test splits to be used for evaluation.
+        """
 
         test_splits = []
 
         # set the first month of the first training split
         month_min = self.full_split[0] + max(self.steps)
         # set the first month of the last training split
-        month_max = self.full_split[1]
+        month_max = self.full_split[1] - self.test_window_size
 
-        # get windows before the train split
-        start_month = model.train_split.start_month - test_window_size
-        end_month = model.train_split.start_month - 1
+        for step in self.steps:
 
-        while start_month >= month_min:
+            start_month = month_min
+            end_month = month_min + self.test_window_size - 1
 
-            test_split = TestSplit(start_month, end_month, model.train_split.step)
+            while start_month <= month_max:
 
-            start_month -= slide_window_size
-            end_month -= slide_window_size
+                test_split = TestSplit(start_month, end_month, step)
 
-            if not (test_split.end_month >= model.train_split.start_month and test_split.start_month <= model.train_split.end_month):
                 test_splits.append(test_split)
 
-        # get windows after the train split
-        start_month = model.train_split.end_month + 1
-        end_month = model.train_split.end_month + test_window_size + 1
-
-        while end_month <= month_max:
-            
-            test_split = TestSplit(start_month, end_month, model.train_split.step)
-
-            start_month += slide_window_size
-            end_month += slide_window_size
-
-            if not (test_split.end_month >= model.train_split.start_month and test_split.start_month <= model.train_split.end_month):
-                test_splits.append(test_split)
+                start_month += self.slide_window_size
+                end_month += self.slide_window_size
 
         return test_splits
+    
 
+    @staticmethod
+    def _has_overlap(train_split: TrainSplit, test_split: TestSplit) -> bool:
+        """
+        Check if the train split overlaps with the test split.
+        Overlap is defined as any month that is included in both the train and test splits.
+        
+        Arguments:
+            train_split (TrainSplit): the training split to check
+            test_split (TestSplit): the test split to check
+        Returns:
+            bool: True if the train split overlaps with the test split, False otherwise
+        """
+
+        # if the train split is after the test split, there is no overlap
+        if train_split.start_month >= test_split.end_month:
+            return False
+        # if the train split is before the test split, there is no overlap
+        elif train_split.end_month <= test_split.start_month:
+            return False
+        # if the train split overlaps with the test split, return True
+        else:
+            return True
