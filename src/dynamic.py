@@ -361,18 +361,6 @@ class DynamicModelManager:
         # set fitted flag to True
         self._is_fitted = True
 
-    
-    def fit_baselines(self, data: pd.DataFrame) -> None:
-        
-        
-        for split in self.test_splits:
-
-            
-
-
-        
-        ...
-
 
     def save_artifact(
             self,
@@ -409,7 +397,7 @@ class DynamicModelManager:
             raise ValueError("Models must be fitted before predicting")
 
         # TODO this is currently an overestimation of the number of iterations
-        total_iterations = len(self.models) * len(self.test_splits)
+        total_iterations = len(self.models) * (len(self.test_splits) - (self.train_window_size // self.test_window_size))
         
         with tqdm(total=total_iterations, desc="Predicting") as pbar:
             for model in self.models:
@@ -419,11 +407,9 @@ class DynamicModelManager:
                 for test_split in self.test_splits:
 
                     if self._has_overlap(model.train_split, test_split):
-                        pbar.update(1)
                         continue
 
                     if model.train_split.step != test_split.step:
-                        pbar.update(1)
                         continue
                     
                     test_data = data.copy()
