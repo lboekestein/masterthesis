@@ -396,7 +396,6 @@ class DynamicModelManager:
         if not self._is_fitted:
             raise ValueError("Models must be fitted before predicting")
 
-        # TODO this is currently an overestimation of the number of iterations
         total_iterations = len(self.models) * (len(self.test_splits) - (self.train_window_size // self.test_window_size))
         
         with tqdm(total=total_iterations, desc="Predicting") as pbar:

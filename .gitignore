@@ -1,3 +1,5 @@
 data/*
 src/__pycache__/*
+figs/*
+notebooks/luuk_sandbox.ipynb
 .DS_Store
